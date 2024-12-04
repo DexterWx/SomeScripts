@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>图片标注工具</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            position: relative;
+            display: inline-block;
+        }
+        #imageContainer {
+            border: 1px solid #ccc;
+            position: relative;
+            cursor: crosshair;
+            background: white; /* 添加白色背景 */
+        }
+        .box {
+            position: absolute;
+            border: 2px solid red;
+            background-color: rgba(255, 0, 0, 0.1);
+        }
+        #coordinates {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px;
+            border-radius: 3px;
+            pointer-events: none;
+        }
+        .controls {
+            margin-bottom: 20px;
+        }
+        button {
+            margin: 5px;
+            padding: 5px 10px;
+        }
+        #targetImage {
+            display: block;
+            transform-origin: center center;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+</head>
+<body>
+    <div class="controls">
+        <input type="text" id="imageUrl" placeholder="输入图片URL或本地路径" style="width: 300px">
+        <input type="file" id="fileInput" accept="image/*" style="display: none">
+        <button id="chooseFile">选择文件</button>
+        <input type="number" id="rotateAngle" placeholder="旋转角度" style="width: 80px">
+        <button id="rotateBtn">旋转</button>
+        <button id="resetBtn">复原</button>
+        <button id="startDrawing">开始画框</button>
+        <button id="endDrawing">结束</button>
+    </div>
+    <div class="container">
+        <div id="imageContainer">
+            <img id="targetImage" crossorigin="anonymous" src="https://klximg.oss-cn-beijing.aliyuncs.com/scanimage/0494d12916ee4694b038178b23e821b1_1.jpg">
+        </div>
+    </div>
+    <div id="coordinates"></div>
+
+    <script>
+        const imageUrl = document.getElementById('imageUrl');
+        const startBtn = document.getElementById('startDrawing');
+        const endBtn = document.getElementById('endDrawing');
+        const imageContainer = document.getElementById('imageContainer');
+        const targetImage = document.getElementById('targetImage');
+        const coordinates = document.getElementById('coordinates');
+        const resetBtn = document.getElementById('resetBtn');
+        const fileInput = document.getElementById('fileInput');
+        const chooseFileBtn = document.getElementById('chooseFile');
+        
+        let isDrawing = false;
+        let isMouseDown = false;
+        let startX, startY;
+        let boxes = [];
+        let firstClick = null;
+        let originalImageUrl = targetImage.src; // 存储原始图片URL
+        
+        // 显示鼠标坐标
+        document.addEventListener('mousemove', (e) => {
+            const rect = imageContainer.getBoundingClientRect();
+            const imageX = e.pageX - rect.left;
+            const imageY = e.pageY - rect.top;
+            
+            // 确保坐标在图片范围内
+            if (imageX >= 0 && imageX <= rect.width && imageY >= 0 && imageY <= rect.height) {
+                coordinates.style.left = e.pageX + 15 + 'px';
+                coordinates.style.top = e.pageY + 15 + 'px';
+                coordinates.textContent = `X: ${Math.round(imageX)}, Y: ${Math.round(imageY)}`;
+            }
+        });
+
+        // 加载图片
+        imageUrl.addEventListener('keyup', (e) => {
+            if (e.key === 'Enter') {
+                if (imageUrl.value.startsWith('http')) {
+                    // 处理网络图片
+                    targetImage.crossOrigin = 'anonymous';
+                    targetImage.src = imageUrl.value;
+                    originalImageUrl = imageUrl.value;
+                }
+            }
+        });
+
+        // 为URL输入框添加点击全选功能
+        imageUrl.addEventListener('click', function() {
+            this.select();
+        });
+
+        // 点击选择文件按钮时触发文件选择器
+        chooseFileBtn.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // 处理文件选择
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    targetImage.crossOrigin = 'anonymous';
+                    targetImage.src = e.target.result;
+                    originalImageUrl = e.target.result;
+                    imageUrl.value = file.name; // 显示文件名在输入框
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // 开始画框
+        startBtn.addEventListener('click', () => {
+            isDrawing = true;
+            boxes = [];
+            firstClick = null;
+            clearBoxes();
+        });
+
+        // 修改 endBtn 的事件处理程序
+        endBtn.addEventListener('click', () => {
+            isDrawing = false;
+            firstClick = null;
+            
+            // 生成时间戳文件名
+            const now = new Date();
+            const timestamp = now.getFullYear() +
+                String(now.getMonth() + 1).padStart(2, '0') +
+                String(now.getDate()).padStart(2, '0') +
+                String(now.getHours()).padStart(2, '0') +
+                String(now.getMinutes()).padStart(2, '0') +
+                String(now.getSeconds()).padStart(2, '0');
+            
+            let imagePath = targetImage.src;
+            const fileName = `${timestamp}.jpg`;
+            const filePath = `D:/download/${fileName}`;
+            
+            // 如果图片被旋转过，保存新图片
+            if (currentRotation !== 0) {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = targetImage.width;
+                canvas.height = targetImage.height;
+                
+                // 绘制当前图片状态
+                ctx.drawImage(targetImage, 0, 0);
+                
+                // 直接创建数据并复制到剪贴板
+                const data = {
+                    image: filePath,
+                    boxes: boxes
+                };
+                
+                // 转换为blob并触发下载
+                canvas.toBlob((blob) => {
+                    // 使用自定义下载函数而不是saveAs
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = fileName;
+                    link.click();
+                    URL.revokeObjectURL(link.href);
+                    
+                    // 复制到剪贴板
+                    navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+                }, 'image/jpeg');
+            } else {
+                // 未旋转时直接使用原始数据
+                const data = {
+                    image: imagePath,
+                    boxes: boxes
+                };
+                navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+            }
+            
+            // 清除所有框
+            clearBoxes();
+            boxes = [];
+        });
+
+        // 移除原有的mousedown、mousemove、mouseup事件
+        // 添加新的点击事件处理
+        imageContainer.addEventListener('click', (e) => {
+            if (!isDrawing) return;
+            
+            const rect = imageContainer.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+            
+            if (!firstClick) {
+                // 第一次点击
+                firstClick = { x: clickX, y: clickY };
+                
+                // 创建临时框显示第一个点
+                const box = document.createElement('div');
+                box.className = 'box';
+                box.style.left = clickX + 'px';
+                box.style.top = clickY + 'px';
+                box.style.width = '2px';
+                box.style.height = '2px';
+                box.id = 'currentBox';
+                imageContainer.appendChild(box);
+            } else {
+                // 第二次点击
+                const x = Math.min(firstClick.x, clickX);
+                const y = Math.min(firstClick.y, clickY);
+                const w = Math.abs(clickX - firstClick.x);
+                const h = Math.abs(clickY - firstClick.y);
+                
+                // 移除临时框
+                const currentBox = document.getElementById('currentBox');
+                if (currentBox) {
+                    currentBox.remove();
+                }
+                
+                // 添加最终的框
+                if (w > 0 && h > 0) {
+                    boxes.push({
+                        x: Math.round(x),
+                        y: Math.round(y),
+                        w: Math.round(w),
+                        h: Math.round(h)
+                    });
+                    drawBox(x, y, w, h);
+                }
+                
+                // 重置第一次点击
+                firstClick = null;
+            }
+        });
+
+        // 添加mousemove事件处理动态预览
+        imageContainer.addEventListener('mousemove', (e) => {
+            if (!isDrawing || !firstClick) return;
+            
+            const rect = imageContainer.getBoundingClientRect();
+            const currentX = e.clientX - rect.left;
+            const currentY = e.clientY - rect.top;
+            
+            const previewBox = document.getElementById('currentBox');
+            if (previewBox) {
+                const x = Math.min(firstClick.x, currentX);
+                const y = Math.min(firstClick.y, currentY);
+                const w = Math.abs(currentX - firstClick.x);
+                const h = Math.abs(currentY - firstClick.y);
+                
+                previewBox.style.left = x + 'px';
+                previewBox.style.top = y + 'px';
+                previewBox.style.width = w + 'px';
+                previewBox.style.height = h + 'px';
+            }
+        });
+
+        function drawBox(x, y, w, h) {
+            const box = document.createElement('div');
+            box.className = 'box';
+            box.style.left = x + 'px';
+            box.style.top = y + 'px';
+            box.style.width = w + 'px';
+            box.style.height = h + 'px';
+            imageContainer.appendChild(box);
+        }
+
+        // 修改 clearBoxes 函数确保完全清除
+        function clearBoxes() {
+            // 获取所有box类的元素并移除
+            const existingBoxes = imageContainer.getElementsByClassName('box');
+            while (existingBoxes.length > 0) {
+                existingBoxes[0].remove();
+            }
+        }
+
+        // 加载完成后设置容器大小
+        targetImage.onload = function() {
+            imageContainer.style.width = this.width + 'px';
+            imageContainer.style.height = this.height + 'px';
+            currentRotation = 0; // 重置旋转角度
+        };
+
+        // 添加旋转相关变量和函数
+        const rotateAngleInput = document.getElementById('rotateAngle');
+        const rotateBtn = document.getElementById('rotateBtn');
+        let currentRotation = 0;
+
+        rotateBtn.addEventListener('click', () => {
+            const angle = parseInt(rotateAngleInput.value) || 0;
+            currentRotation = angle;
+            
+            // 创建canvas进行图片旋转
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // 计算旋转后的尺寸
+            const radians = (angle * Math.PI) / 180;
+            const sin = Math.abs(Math.sin(radians));
+            const cos = Math.abs(Math.cos(radians));
+            const imgWidth = targetImage.naturalWidth;
+            const imgHeight = targetImage.naturalHeight;
+            canvas.width = Math.floor(imgWidth * cos + imgHeight * sin);
+            canvas.height = Math.floor(imgHeight * cos + imgWidth * sin);
+            
+            // 设置白色背景
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 移动到画布中心并旋转
+            ctx.translate(canvas.width/2, canvas.height/2);
+            ctx.rotate(radians);
+            ctx.drawImage(targetImage, -imgWidth/2, -imgHeight/2);
+            
+            // 更新图片时设置 crossOrigin
+            const newImage = new Image();
+            newImage.crossOrigin = 'anonymous';
+            newImage.onload = function() {
+                targetImage.src = canvas.toDataURL();
+                imageContainer.style.width = this.width + 'px';
+                imageContainer.style.height = this.height + 'px';
+            };
+            newImage.src = canvas.toDataURL();
+            
+            // 清除已有的框
+            clearBoxes();
+            boxes = [];
+            
+            // 更新容器尺寸（在图片加载完成后）
+            targetImage.onload = function() {
+                imageContainer.style.width = this.width + 'px';
+                imageContainer.style.height = this.height + 'px';
+            };
+        });
+
+        // 添加复原按钮事件处理
+        resetBtn.addEventListener('click', () => {
+            // 重置图片
+            targetImage.crossOrigin = 'anonymous';
+            targetImage.src = originalImageUrl;
+            
+            // 重置旋转角度输入
+            rotateAngleInput.value = '';
+            currentRotation = 0;
+            
+            // 清除所有框
+            clearBoxes();
+            boxes = [];
+            firstClick = null;
+            
+            // 重置状态
+            isDrawing = false;
+            isMouseDown = false;
+        });
+    </script>
+</body>
+</html>

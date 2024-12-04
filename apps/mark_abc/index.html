@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>点击两次确定框选区域</title>
+    <style>
+        #image {
+            position: relative !important;  /* 强制使用相对定位 */
+            display: inline-block;
+        }
+        #selection {
+            position: absolute;
+            border: 2px dashed #000;
+            pointer-events: none;
+        }
+        .result-box {
+            position: absolute !important;
+            border: 2px solid !important;
+            pointer-events: auto;  /* 允许鼠标事件 */
+            box-sizing: border-box;
+            z-index: 1000;
+        }
+        .letter-box {
+            border-color: blue !important;
+        }
+        .number-box {
+            border-color: red !important;
+        }
+        .group-box {
+            position: absolute;
+            background-color: rgba(255, 192, 203, 0.5);
+            pointer-events: none;
+            z-index: 999;
+        }
+        .group-label {
+            position: absolute;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-size: 14px;
+            z-index: 1001;
+            transform: translateY(-100%);
+        }
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            line-height: 1
+        }
+    </style>
+</head>
+<body>
+    <input type="text" id="imageUrl" placeholder="入图片URL" style="width: 300px;">
+    <button id="loadImage">加载图片</button>
+    <select id="imageUrls" style="width: 300px;"></select>
+    <button id="loadImageFromList">从列表加载图片</button>
+    <div id="image">
+        <img id="mainImage" src="https://klximg.oss-cn-beijing.aliyuncs.com/scanimage/c62c4839861c45309a1e039773493d67_0.jpg" alt="Image">
+        <div id="selection"></div>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const image = document.getElementById('mainImage');
+            const selection = document.getElementById('selection');
+            const imageUrlInput = document.getElementById('imageUrl');
+            const selectElement = document.getElementById('imageUrls');
+            const loadImageButton = document.getElementById('loadImage');
+            const loadImageFromListButton = document.getElementById('loadImageFromList');            
+            let startX, startY, isSelecting = false;
+
+            imageUrlInput.addEventListener('focus', (e) => {
+                e.target.select();
+            });
+
+            imageUrlInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    loadImage();
+                }
+            });
+
+            function loadImage() {
+                const url = imageUrlInput.value;
+                if (url) {
+                    const existingBoxes = document.querySelectorAll('.result-box, .group-box, .group-label');
+                    existingBoxes.forEach(box => box.remove());
+                    selection.style.display = 'none';
+                    image.src = url;
+                }
+            }
+
+            function loadImageFromList() {
+                const url = selectElement.value;
+                if (url) {
+                    const existingBoxes = document.querySelectorAll('.result-box, .group-box, .group-label');
+                    existingBoxes.forEach(box => box.remove());
+                    selection.style.display = 'none';
+                    image.src = url;
+                }
+            }
+
+            function loadImageUrls() {
+                fetch('/urls.json', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('API 返回的数据:', data); // 调试输出
+                    data.forEach((url, index) => {
+                        const option = document.createElement('option');
+                        option.value = url;
+                        option.textContent = url;
+                        selectElement.appendChild(option);
+                    });
+                })
+                .catch(err => {
+                    console.error('API 错误:', err);
+                });                
+            }
+            loadImageUrls();
+
+            loadImageButton.addEventListener('click', loadImage);
+            loadImageFromListButton.addEventListener('click', loadImageFromList);
+
+            image.addEventListener('click', (e) => {
+                const rect = image.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                if (!isSelecting) {
+                    startX = x;
+                    startY = y;
+                    isSelecting = true;
+                    selection.style.left = `${startX}px`;
+                    selection.style.top = `${startY}px`;
+                    selection.style.width = '0px';
+                    selection.style.height = '0px';
+                    selection.style.display = 'block';
+                } else {
+                    const endX = x;
+                    const endY = y;
+                    const width = Math.abs(endX - startX);
+                    const height = Math.abs(endY - startY);
+                    const left = Math.min(startX, endX);
+                    const top = Math.min(startY, endY);
+
+                    selection.style.display = 'none';
+
+                    if (width > 0 && height > 0) {
+                        const url = `${image.src}?x-oss-process=image/crop,x_${Math.round(left)},y_${Math.round(top)},w_${Math.round(width)},h_${Math.round(height)}`;
+                        navigator.clipboard.writeText(url);
+                        
+                        fetch('http://localhost:8067/infer', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-17zuoye-Trace-Pipeline': 'on'
+                            },
+                            mode: 'cors',
+                            body: JSON.stringify({
+                                url_image: url
+                            })
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            console.log('API 返回的数据:', data); // 调试输出
+
+                            if (!data.forms || !Array.isArray(data.forms)) {
+                                console.error('API 返回的数据格式不正确');
+                                return;
+                            }
+
+                            const existingBoxes = document.querySelectorAll('.result-box, .group-box, .group-label');
+                            existingBoxes.forEach(box => box.remove());
+
+                            const imageContainer = document.getElementById('image');
+
+                            data.forms.forEach((form) => {
+                                const group = form.group;
+                                if (group.length > 0) {
+                                    const firstItem = group[0].coordinate;
+                                    const lastItem = group[group.length - 1].coordinate;
+
+                                    const minX = firstItem.x;
+                                    const minY = firstItem.y;
+                                    const maxX = lastItem.x + lastItem.w;
+                                    const maxY = lastItem.y + lastItem.h;
+
+                                    const groupBox = document.createElement('div');
+                                    groupBox.className = 'group-box';
+                                    groupBox.style.left = `${minX + left}px`;
+                                    groupBox.style.top = `${minY + top}px`;
+                                    groupBox.style.width = `${maxX - minX}px`;
+                                    groupBox.style.height = `${maxY - minY}px`;
+
+                                    const groupLabel = document.createElement('div');
+                                    groupLabel.className = 'group-label';
+                                    groupLabel.style.left = `${minX + left}px`;
+                                    groupLabel.style.top = `${minY + top}px`;
+                                    groupLabel.textContent = form.qid;
+
+                                    imageContainer.appendChild(groupBox);
+                                    imageContainer.appendChild(groupLabel);
+                                }
+
+                                group.forEach((element) => {
+                                    const box = document.createElement('div');
+                                    box.className = `result-box ${element.type === 'letter' ? 'letter-box' : 'number-box'}`;
+
+                                    box.style.left = `${element.coordinate.x + left}px`;
+                                    box.style.top = `${element.coordinate.y + top}px`;
+                                    box.style.width = `${element.coordinate.w}px`;
+                                    box.style.height = `${element.coordinate.h}px`;
+                                    box.style.border = `2px solid ${element.type === 'letter' ? 'blue' : 'red'}`;
+                                    box.style.pointerEvents = 'auto';
+                                    box.style.zIndex = '1000';
+
+                                    box.setAttribute('title', `字符: ${element.char}\n置信度: ${(element.confidence * 100).toFixed(2)}%`);
+
+                                    imageContainer.appendChild(box);
+                                });
+                            });
+                        })
+                        .catch(err => {
+                            console.error('API 错误:', err);
+                        });
+                    }
+                    isSelecting = false;
+                }
+            });
+
+            image.addEventListener('mousemove', (e) => {
+                if (!isSelecting) return;
+                const rect = image.getBoundingClientRect();
+                const currentX = e.clientX - rect.left;
+                const currentY = e.clientY - rect.top;
+                const width = Math.abs(currentX - startX);
+                const height = Math.abs(currentY - startY);
+                const left = Math.min(startX, currentX);
+                const top = Math.min(startY, currentY);
+
+                selection.style.left = `${left}px`;
+                selection.style.top = `${top}px`;
+                selection.style.width = `${width}px`;
+                selection.style.height = `${height}px`;
+            });
+
+            function showTooltip(box, text, score, x, y, width, height) {
+                const tooltip = document.createElement('div');
+                tooltip.className = 'tooltip';
+                tooltip.innerHTML = `
+                    文本: ${text}<br>
+                    置信度: ${(score * 100).toFixed(2)}%<br>
+                    坐标: (${Math.round(x)}, ${Math.round(y)})<br>
+                    尺寸: ${Math.round(width)} × ${Math.round(height)}
+                `;
+                
+                box.appendChild(tooltip);
+            }
+        });
+    </script>
+</body>
+</html>
